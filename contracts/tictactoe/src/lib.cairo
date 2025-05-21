@@ -1,3 +1,12 @@
+#[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
+#[allow(starknet::store_no_default_variant)]
+enum GameOutcome {
+    InProgress,
+    PlayerWon,
+    ComputerWon,
+    Tie
+}
+
 #[starknet::interface]
 pub trait ITicTacToe<TContractState> {
     fn start_game(ref self: TContractState, bet: u256);
@@ -13,19 +22,19 @@ struct GameState {
     bet: u256,
     moves_made: u8,
     is_player_turn: bool,
+    outcome: GameOutcome,  // Added game outcome field
 }
 
 #[starknet::contract]
 mod TicTacToe {
     use core::panic_with_felt252;
-    // use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-     use openzeppelin::access::ownable::OwnableComponent;
+    use openzeppelin::access::ownable::OwnableComponent;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
-    use super::GameState;
+    use super::{GameState, GameOutcome};
 
     #[storage]
     struct Storage {
@@ -37,6 +46,7 @@ mod TicTacToe {
         board: Map<u64, u8>,
         turn: Map<u32, u8>,
         moves_made: Map<u32, u8>,
+        outcome: Map<u32, GameOutcome>,  // Added outcome storage
     }
 
     #[event]
@@ -75,6 +85,7 @@ mod TicTacToe {
         game_id: u32,
         winner: ContractAddress,
         bet_amount: u256,
+        outcome: GameOutcome,  // Added outcome to event
     }
 
     #[abi(embed_v0)]
@@ -93,16 +104,35 @@ mod TicTacToe {
             let player = self.player.entry(id).read();
 
             assert(caller == player, 'You are not the player');
+            
+            // Set the winner
             self.winner.entry(id).write(winner);
+            
+            // Determine and set the outcome
+            let zero_address: ContractAddress = 0.try_into().unwrap();
+            
+            let current_outcome = if winner == player {
+                GameOutcome::PlayerWon
+            } else if winner == zero_address && self.moves_made.entry(id).read() == 9 {
+                GameOutcome::Tie
+            } else if winner == zero_address {
+                GameOutcome::ComputerWon
+            } else {
+                GameOutcome::InProgress // shouldn't reach here
+            };
+            
+            self.outcome.entry(id).write(current_outcome);
             self._payout(id);
 
-            // Emit game finished event
-            self
-                .emit(
-                    GameFinished {
-                        game_id: id, winner: winner, bet_amount: self.bets.entry(id).read(),
-                    },
-                );
+            // Emit game finished event with outcome
+            self.emit(
+                GameFinished {
+                    game_id: id, 
+                    winner: winner, 
+                    bet_amount: self.bets.entry(id).read(),
+                    outcome: current_outcome,
+                },
+            );
         }
 
         fn play_move(ref self: ContractState, id: u32, x: u8, y: u8) {
@@ -135,8 +165,21 @@ mod TicTacToe {
                 self.update_winner(id, caller);
                 return;
             } else if self.moves_made.entry(id).read() == 9 {
-                // Game is draw
-                self.update_winner(id, 0.try_into().unwrap());
+                // Game is draw - use address 0 but mark as Tie
+                let zero_address: ContractAddress = 0.try_into().unwrap();
+                self.winner.entry(id).write(zero_address);
+                self.outcome.entry(id).write(GameOutcome::Tie);
+                self._payout(id);
+                
+                // Emit game finished event
+                self.emit(
+                    GameFinished {
+                        game_id: id, 
+                        winner: zero_address, 
+                        bet_amount: self.bets.entry(id).read(),
+                        outcome: GameOutcome::Tie,
+                    },
+                );
                 return;
             }
 
@@ -148,22 +191,45 @@ mod TicTacToe {
 
             self.board.entry(computer_key).write(2);
             self.moves_made.entry(id).write(self.moves_made.entry(id).read() + 1);
-            self
-                .turn
-                .entry(id)
-                .write(current_turn + 2); // Increment by 2 to keep player's turn even
+            self.turn.entry(id).write(current_turn + 2); // Increment by 2 to keep player's turn even
 
             // Emit computer move event
             self.emit(ComputerMoved { game_id: id, x: computer_x, y: computer_y });
 
             // Check if computer won
             if self._check_winner(id, 2) {
-                // Computer wins (address 0)
-                self.update_winner(id, 0.try_into().unwrap());
+                // Computer wins (address 0 but marked as ComputerWon)
+                let zero_address: ContractAddress = 0.try_into().unwrap();
+                self.winner.entry(id).write(zero_address);
+                self.outcome.entry(id).write(GameOutcome::ComputerWon);
+                self._payout(id);
+                
+                // Emit game finished event
+                self.emit(
+                    GameFinished {
+                        game_id: id, 
+                        winner: zero_address, 
+                        bet_amount: self.bets.entry(id).read(),
+                        outcome: GameOutcome::ComputerWon,
+                    },
+                );
                 return;
             } else if self.moves_made.entry(id).read() == 9 {
                 // Game is draw
-                self.update_winner(id, 0.try_into().unwrap());
+                let zero_address: ContractAddress = 0.try_into().unwrap();
+                self.winner.entry(id).write(zero_address);
+                self.outcome.entry(id).write(GameOutcome::Tie);
+                self._payout(id);
+                
+                // Emit game finished event
+                self.emit(
+                    GameFinished {
+                        game_id: id, 
+                        winner: zero_address, 
+                        bet_amount: self.bets.entry(id).read(),
+                        outcome: GameOutcome::Tie,
+                    },
+                );
                 return;
             }
         }
@@ -174,8 +240,16 @@ mod TicTacToe {
             let bet = self.bets.entry(id).read();
             let moves_made = self.moves_made.entry(id).read();
             let current_turn = self.turn.entry(id).read();
+            let outcome = self.outcome.entry(id).read();
 
-            GameState { player, winner, bet, moves_made, is_player_turn: current_turn % 2 == 0 }
+            GameState { 
+                player, 
+                winner, 
+                bet, 
+                moves_made, 
+                is_player_turn: current_turn % 2 == 0,
+                outcome,
+            }
         }
     }
 
@@ -184,13 +258,15 @@ mod TicTacToe {
         fn _start(ref self: ContractState, bet: u256) -> u32 {
             let caller = get_caller_address();
             let game_id = self.games_len.read();
+            
             self.player.entry(game_id).write(caller);
             self.games_len.write(game_id + 1);
-            self.turn.entry(game_id).write(0); //start with user
+            self.turn.entry(game_id).write(0); // start with user
+            self.outcome.entry(game_id).write(GameOutcome::InProgress);
+            
             game_id
         }
 
-  
         fn _increase_balance(ref self: ContractState, amount: u256, id: u32) {
             assert(amount != 0, 'Amount cannot be 0');
 
@@ -220,24 +296,23 @@ mod TicTacToe {
         }
 
         fn _payout(ref self: ContractState, id: u32) {
-            let caller = get_caller_address();
             let rewardee = self.winner.entry(id).read();
+            let zero_address: ContractAddress = 0.try_into().unwrap();
+            let outcome = self.outcome.entry(id).read();
 
-            if rewardee == 0.try_into().unwrap() {
-                return; // draw or computer wins
+            // Check if it's a player win - only payout in this case
+            if outcome == GameOutcome::PlayerWon && rewardee != zero_address {
+                let strk_addr: ContractAddress =
+                    0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
+                    .try_into()
+                    .unwrap();
+
+                let strk_dispatcher = IERC20Dispatcher { contract_address: strk_addr };
+                strk_dispatcher.transfer(rewardee, self.bets.entry(id).read());
+
+                self._decrease_balance(self.bets.entry(id).read());
             }
-
-            assert(caller == rewardee, 'You are not the winner');
-
-            let strk_addr: ContractAddress =
-                0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
-                .try_into()
-                .unwrap();
-
-            let strk_dispatcher = IERC20Dispatcher { contract_address: strk_addr };
-            strk_dispatcher.transfer(caller, self.bets.entry(id).read());
-
-            self._decrease_balance(self.bets.entry(id).read());
+            // For computer wins or ties, no payout (house keeps the bet)
         }
 
         fn _check_winner(ref self: ContractState, id: u32, marker: u8) -> bool {

@@ -33,6 +33,28 @@
     ]
   },
   {
+    "type": "enum",
+    "name": "tictactoe::GameOutcome",
+    "variants": [
+      {
+        "name": "InProgress",
+        "type": "()"
+      },
+      {
+        "name": "PlayerWon",
+        "type": "()"
+      },
+      {
+        "name": "ComputerWon",
+        "type": "()"
+      },
+      {
+        "name": "Tie",
+        "type": "()"
+      }
+    ]
+  },
+  {
     "type": "struct",
     "name": "tictactoe::GameState",
     "members": [
@@ -55,6 +77,10 @@
       {
         "name": "is_player_turn",
         "type": "core::bool"
+      },
+      {
+        "name": "outcome",
+        "type": "tictactoe::GameOutcome"
       }
     ]
   },
@@ -217,6 +243,11 @@
       {
         "name": "bet_amount",
         "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "outcome",
+        "type": "tictactoe::GameOutcome",
         "kind": "data"
       }
     ]

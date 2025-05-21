@@ -5,9 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { CallData, cairo, BigNumberish } from "starknet";
 import { TIC_CONTRACT_ADDRESS, provider, STRK_TOKEN_ADDRESS, abi } from "../constants";
 import { toast } from "react-hot-toast";
+import { stark } from "starknet";
+
+const COMPUTER_MOVED_SELECTOR = "0x1de6efda73bf7cdf468f4d493116062cc29b8291b1920844c8efb9301725837"
+const PLAYER_MOVED_SELECTOR = "0x132cd782aa62d9aeaf17b71256b4984aef1930fc3abb2d5b81183ee54d1f163"
 
 export interface GameState {
-  moves: any;
   player: string;
   winner: string;
   bet: BigNumberish;
@@ -30,13 +33,8 @@ export interface GameMove {
 
 export const useTicTacToeContract = (connected: boolean, account: any) => {
 
-  const [moveHistory, setMoveHistory] = useState<GameMove[]>([]);
   const [currentGameId, setCurrentGameId] = useState<number | null>(null);
 
-  // Add a move to the history
-  const addMoveToHistory = useCallback((move: GameMove) => {
-    setMoveHistory(prevHistory => [...prevHistory, move]);
-  }, []);
 
   const startGame = useCallback(
     async (bet: BigNumberish) => {
@@ -93,8 +91,7 @@ export const useTicTacToeContract = (connected: boolean, account: any) => {
           const gameId = parseInt(event.data[0], 16);
           console.log({gameId})
           setCurrentGameId(gameId);
-          // Clear move history for the new game
-          setMoveHistory(prevHistory => prevHistory.filter(move => move.gameId !== gameId));
+
           toast.success("Game started successfully!", { id });
           return gameId;
         }
@@ -110,109 +107,85 @@ export const useTicTacToeContract = (connected: boolean, account: any) => {
     [connected, account]
   );
 
-  const playMove = useCallback(
-    async (gameId: number, x: number, y: number) => {
-      if (!connected || !account) {
-        toast.error("Please connect your wallet first");
-        return { success: false };
-      }
 
-      if (x < 0 || x > 2 || y < 0 || y > 2) {
-        toast.error("Invalid move coordinates");
-        return { success: false };
-      }
 
-      const id = toast.loading("Making your move...");
+const playMove = useCallback(
+  async (gameId: number, x: number, y: number) => {
+    if (!connected || !account) {
+      toast.error("Please connect your wallet first");
+      return { success: false };
+    }
 
-      try {
-        const callResult = await account.execute({
-          contractAddress: TIC_CONTRACT_ADDRESS,
-          entrypoint: "play_move",
-          calldata: CallData.compile({
-            id: gameId,
-            x,
-            y,
-          }),
-        });
+    if (x < 0 || x > 2 || y < 0 || y > 2) {
+      toast.error("Invalid move coordinates");
+      return { success: false };
+    }
 
-        const txHash = callResult?.transaction_hash;
-        if (!txHash) {
-          throw new Error("Transaction hash missing");
+    const id = toast.loading("Making your move...");
+
+    try {
+      const callResult = await account.execute({
+        contractAddress: TIC_CONTRACT_ADDRESS,
+        entrypoint: "play_move",
+        calldata: CallData.compile({ id: gameId, x, y }),
+      });
+
+      const txHash = callResult?.transaction_hash;
+      if (!txHash) throw new Error("Transaction hash missing");
+
+      const receipt = await provider.waitForTransaction(txHash);
+      console.log("Move transaction receipt:", receipt);
+
+      let computerMove: { success: boolean; x?: number; y?: number } = { success: false };
+      let gameResult: {
+        success: boolean;
+        winner?: string;
+        isPlayerWinner?: boolean;
+        isComputerWinner?: boolean;
+        isTie?: boolean;
+      } = { success: false };
+
+      for (const event of receipt?.events || []) {
+        const { from_address, keys, data } = event;
+
+        if (from_address !== TIC_CONTRACT_ADDRESS || !keys?.length) continue;
+
+        const keyStr = keys[0];
+
+        // ComputerMoved
+        if (keyStr === COMPUTER_MOVED_SELECTOR && data.length >= 3) {
+          const computerX = parseInt(data[1], 16);
+          const computerY = parseInt(data[2], 16);
+          computerMove = { success: true, x: computerX, y: computerY };
         }
 
-        const receipt = await provider.waitForTransaction(txHash);
-        console.log("Move transaction receipt:", receipt);
-
-        // Find the ComputerMoved event
-        const computerMovedEvent = receipt?.events?.find(
-          (e:any) => 
-            e.from_address === TIC_CONTRACT_ADDRESS && 
-            e.keys && 
-            e.keys.some((key: string | string[]) => key.includes("ComputerMoved"))
-        );
-
-        // Find the GameFinished event to check if the game ended
-        const gameFinishedEvent = receipt?.events?.find(
-          (e:any) => 
-            e.from_address === TIC_CONTRACT_ADDRESS && 
-            e.keys && 
-            e.keys.some((key: string | string[]) => key.includes("GameFinished"))
-        );
-
-        toast.success("Move played successfully!", { id });
-
-        // Add player's move to history
-        addMoveToHistory({
-          gameId,
-          x,
-          y,
-          player: 1 // 1 represents player
-        });
-
-        let computerMove = null;
-        let gameResult = null;
-
-        // Extract computer move data if event exists
-        if (computerMovedEvent && computerMovedEvent.data && computerMovedEvent.data.length >= 3) {
-          // Based on the event structure: ComputerMoved { game_id, x, y }
-          // Skip game_id which is at index 0
-          const computerX = parseInt(computerMovedEvent.data[1], 16);
-          const computerY = parseInt(computerMovedEvent.data[2], 16);
-          computerMove = { x: computerX, y: computerY };
-          
-          // Add computer's move to history
-          addMoveToHistory({
-            gameId,
-            x: computerX,
-            y: computerY,
-            player: 2 // 2 represents computer
-          });
-        }
-
-        // Extract game result if the game finished
-        if (gameFinishedEvent && gameFinishedEvent.data && gameFinishedEvent.data.length >= 2) {
-          // Based on the event structure: GameFinished { game_id, winner, bet_amount }
-          const winner = gameFinishedEvent.data[1];
-          // Convert to address string
+        // GameFinished
+        if (keyStr === "0x17b45705fce8d870c9cf2a66c27f1add6bd106d4fe0e10d237312c353dd4384" && data.length >= 5) {
+          const winner = data[4];
+          console.log({ winner });
           gameResult = {
+            success: true,
             winner,
-            isPlayerWinner: winner !== "0x0" && winner !== "0"
+            isPlayerWinner: winner === "0x1",
+            isComputerWinner: winner === "0x2",
+            isTie: winner === "0x3",
           };
         }
-
-        return { 
-          success: true, 
-          computerMove, 
-          gameResult 
-        };
-      } catch (err) {
-        console.error("Failed to play move:", err);
-        toast.error("Error playing move", { id });
-        return { success: false };
       }
-    },
-    [connected, account]
-  );
+
+      toast.success("Move played successfully!", { id });
+
+      return { success: true, computerMove, gameResult };
+    } catch (err) {
+      console.error("Failed to play move:", err);
+      toast.error("Error playing move", { id });
+      return { success: false };
+    }
+  },
+  [connected, account]
+);
+
+
 
 const getGameState = useCallback(
   async (gameId: number): Promise<GameState | null> => {
@@ -238,7 +211,6 @@ const getGameState = useCallback(
         bet: result[2],                     // Bet amount
         moves_made: parseInt(result[3], 16), // Moves made as number
         is_player_turn: result[5] === "0x1", // Is player turn boolean (position 5!)
-        // No moves array in the contract's return value
       };
     } catch (err) {
       console.error("Failed to get game state:", err);
@@ -254,6 +226,5 @@ const getGameState = useCallback(
     startGame, 
     playMove, 
     getGameState,
-    moveHistory
   };
 };

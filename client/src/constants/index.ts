@@ -2,7 +2,7 @@
 import { Abi } from "starknet";
 import {  RpcProvider } from "starknet";
 export const TIC_CONTRACT_ADDRESS =
-  "0x5d29da03836ef1380f2953084adf1685b535e94f3a7e3ea2dc64bd456d425";
+  "0x23a484ad8053494875e38dfa9069e35a7c416665d3abef861a27a2c64f20a53";
   export const STRK_TOKEN_ADDRESS =
   "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
@@ -475,6 +475,28 @@ export const abi: Abi=[
     ]
   },
   {
+    "type": "enum",
+    "name": "tictactoe::GameOutcome",
+    "variants": [
+      {
+        "name": "InProgress",
+        "type": "()"
+      },
+      {
+        "name": "PlayerWon",
+        "type": "()"
+      },
+      {
+        "name": "ComputerWon",
+        "type": "()"
+      },
+      {
+        "name": "Tie",
+        "type": "()"
+      }
+    ]
+  },
+  {
     "type": "struct",
     "name": "tictactoe::GameState",
     "members": [
@@ -497,6 +519,10 @@ export const abi: Abi=[
       {
         "name": "is_player_turn",
         "type": "core::bool"
+      },
+      {
+        "name": "outcome",
+        "type": "tictactoe::GameOutcome"
       }
     ]
   },
@@ -660,6 +686,11 @@ export const abi: Abi=[
         "name": "bet_amount",
         "type": "core::integer::u256",
         "kind": "data"
+      },
+      {
+        "name": "outcome",
+        "type": "tictactoe::GameOutcome",
+        "kind": "data"
       }
     ]
   },
@@ -691,6 +722,7 @@ export const abi: Abi=[
     ]
   }
 ]
+
 
 
 

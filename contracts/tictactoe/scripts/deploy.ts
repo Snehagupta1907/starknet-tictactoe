@@ -37,14 +37,34 @@ async function main() {
   // });
 
   // console.log({constructor})
-  const deployResponse = await account0.declareAndDeploy({
-    contract: sierraCode,
-    casm: casmCode,
-    // constructorCalldata: constructor,
-    salt: stark.randomAddress(),
-  });
+  const deployResponse = await account0.declareAndDeploy(
+    {
+      contract: sierraCode,
+      casm: casmCode,
+      salt: stark.randomAddress(),
+    },
+    {
+      resourceBounds: {
+        l1_gas: {
+          max_amount: "0x1189",                     // Keep this as is
+          max_price_per_unit: "0x56ce69332261",     // Fine
+        },
+        l2_gas: {
+          max_amount: "0x141720",                   // Fine
+          max_price_per_unit: "0x2309ee097",        // Fine
+        },
+        l1_data_gas: {
+          max_amount: "0x128",                      // Good (≥ 128)
+          max_price_per_unit: "0x1000"              // ✅ Bump to 4096 (just to be safe)
+        },
+      }
 
-  console.log({deployResponse})
+    }
+  );
+
+
+
+  console.log({ deployResponse })
 
   // Connect the new contract instance :
   const myTestContract = new Contract(
