@@ -35,8 +35,7 @@ export const useTicTacToeContract = (connected: boolean, account: any) => {
 
   const [currentGameId, setCurrentGameId] = useState<number | null>(null);
 
-
-  const startGame = useCallback(
+const startGame = useCallback(
     async (bet: BigNumberish) => {
       if (!connected || !account) {
         toast.error("Please connect your wallet first");
@@ -53,6 +52,9 @@ export const useTicTacToeContract = (connected: boolean, account: any) => {
       const id = toast.loading("Starting a new game...");
 
       try {
+       
+        const betInWei = BigInt(bet)
+
         // First approve the token transfer
         const multiCall = await account.execute([
           {
@@ -60,14 +62,14 @@ export const useTicTacToeContract = (connected: boolean, account: any) => {
             entrypoint: "approve",
             calldata: CallData.compile({
               spender: TIC_CONTRACT_ADDRESS,
-              amount: cairo.uint256(bet),
+              amount: cairo.uint256(betInWei),
             }),
           },
           {
             contractAddress: TIC_CONTRACT_ADDRESS,
             entrypoint: "start_game",
             calldata: CallData.compile({
-              bet: cairo.uint256(bet),
+              bet: cairo.uint256(betInWei),
             }),
           },
         ]);
